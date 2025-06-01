@@ -13,6 +13,7 @@
 #include "wifi_provisioning/manager.h"
 #include "wifi_provisioning/scheme_ble.h"
 #include "cJSON.h"
+//mosquitto_sub -i test_sub1 -t "emqx/esp32" -d
 
 
 #define MESH_ID  {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}
@@ -24,7 +25,7 @@
 bool prov;      //檢測是否有憑證
 bool is_ble_initialized =false;  //避免重複執行
 wifi_config_t current_conf;  //wifi 存放處
-
+static esp_mqtt_client_handle_t client;  // 全域變數，存 MQTT 客戶端句柄
 //-----------------藍芽宣告區------------------------------
     wifi_prov_security_t security = WIFI_PROV_SECURITY_1;
     const char *pop = "abcd1234";  // Proof of Possession
@@ -56,6 +57,45 @@ void add_device_to_table(const char *name, mesh_addr_t *addr) {
 
     printf("已登記裝置：%s - " MACSTR "\n", name, MAC2STR(addr->addr));
 }
+
+
+
+
+
+
+// MQTT 事件處理
+static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) 
+{
+    ESP_LOGI(TAG, "MQTT 事件 ID: %" PRId32, event_id);
+
+    switch (event_id) {
+        case MQTT_EVENT_CONNECTED:
+            ESP_LOGI(TAG, "MQTT 連線成功！");
+            esp_mqtt_client_publish(client, MQTT_TOPIC, "Hello from ESP32!", 0, 0, 0);
+            break;
+        case MQTT_EVENT_DISCONNECTED:
+            ESP_LOGW(TAG, "MQTT 斷線！");
+            break;
+        case MQTT_EVENT_DATA:
+            ESP_LOGI(TAG, "收到 MQTT 訊息！");
+            break;
+        default:
+            ESP_LOGI(TAG, "其他 MQTT 事件: %" PRId32, event_id);
+            break;
+    }
+}
+
+static void mqtt_app_start(void) {
+    esp_mqtt_client_config_t mqtt_cfg = {
+        .broker.address.uri = MQTT_BROKER,  // MQTT Broker 連線設定
+    };
+
+    client = esp_mqtt_client_init(&mqtt_cfg);
+    
+    esp_mqtt_client_register_event(client, ESP_EVENT_ANY_ID, mqtt_event_handler, client);
+    esp_mqtt_client_start(client);
+}
+
 
 void root_recv_task(void *arg)
 {
@@ -139,6 +179,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
         esp_wifi_connect();
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ESP_LOGI(TAG, "✅ Wi-Fi 連線成功!");
+        mqtt_app_start(); 
         // mesh_init();
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         ESP_LOGE(TAG, "⚠️ Wi-Fi 斷線，重新嘗試...");
@@ -236,5 +277,12 @@ void app_main(void)
     wifi_init();
     blu_prov();
     xTaskCreate(root_recv_task, "root_recv_task", 4096, NULL, 5, NULL);
-    
+    while(1)
+    {
+        int i=rand();
+        esp_mqtt_client_publish(client, MQTT_TOPIC, "on", 0, 0, 0);
+        vTaskDelay(pdMS_TO_TICKS(500));
+        ESP_LOGI(TAG, "送了狀態");
+        i++;
+    }
 }
