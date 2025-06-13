@@ -13,7 +13,8 @@
 #include "wifi_provisioning/manager.h"
 #include "wifi_provisioning/scheme_ble.h"
 #include "cJSON.h"
-//mosquitto_sub -i test_sub1 -t "emqx/esp32" -d
+#include "protocomm_security.h"
+//mosquitto_sub -i test_sub1 -t "emqx/esp32" -d  //利用電腦監聽指令
 
 
 #define MESH_ID  {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}
@@ -29,7 +30,7 @@ static esp_mqtt_client_handle_t client;  // 全域變數，存 MQTT 客戶端句
 //-----------------藍芽宣告區------------------------------
     wifi_prov_security_t security = WIFI_PROV_SECURITY_1;
     const char *pop = "abcd1234";  // Proof of Possession
-    const char *service_name = "PROV_ESP32";  // BLE 廣播名稱
+    const char *service_name = "esp32_root";  // BLE 廣播名稱
     const char *service_key = NULL;  // 可設定密鑰
 //--------------------------------------------------------
 
@@ -42,6 +43,58 @@ typedef struct {
 #define MAX_DEVICES 10
 device_entry_t device_table[MAX_DEVICES];
 int device_count = 0;
+int light;
+
+void analogWrite(uint8_t pin, uint32_t value)   //利用gpt製作類是arduino 控制pwm 
+{
+    static bool initialized = false;
+
+    if (!initialized) {
+        // 只初始化一次
+        ledc_timer_config_t ledc_timer = {
+            .speed_mode = LEDC_LOW_SPEED_MODE,
+            .timer_num = LEDC_TIMER_0,
+            .duty_resolution = LEDC_TIMER_8_BIT,  // 0~255
+            .freq_hz = 5000,
+            .clk_cfg = LEDC_AUTO_CLK
+        };
+        ledc_timer_config(&ledc_timer);
+        initialized = true;
+    }
+
+    ledc_channel_config_t ledc_channel = {
+        .gpio_num   = pin,
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .channel    = LEDC_CHANNEL_0,
+        .timer_sel  = LEDC_TIMER_0,
+        .duty       = value,
+        .hpoint     = 0
+    };
+    ledc_channel_config(&ledc_channel);
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, value);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+}
+
+void light_control()
+{
+
+    if(light == 1)
+    {
+        printf("亮");
+        analogWrite(14,255);
+        esp_mqtt_client_publish(client, MQTT_TOPIC, "on", 0, 0, 0);
+        ESP_LOGI(TAG, "on");
+
+    }
+    else
+    {
+        printf("暗");
+        analogWrite(14,0);
+        esp_mqtt_client_publish(client, MQTT_TOPIC, "off", 0, 0, 0);
+        ESP_LOGI(TAG, "off");
+    }    
+
+}
 
 void add_device_to_table(const char *name, mesh_addr_t *addr) {
     if (device_count >= MAX_DEVICES) return;
@@ -112,10 +165,13 @@ void root_recv_task(void *arg)
 
         if (err == ESP_OK) {
             // 資料是 int？
-            if (data.size == sizeof(int)) {
+            if (data.size == sizeof(int)) 
+            {
                 int value;
                 memcpy(&value, data.data, sizeof(int));
+                light = value;
                 printf("Root: 收到 int = %d\n", value);
+                light_control();
 
             } else {
                 // 嘗試解析成 JSON
@@ -147,6 +203,23 @@ void root_recv_task(void *arg)
         vTaskDelay(pdMS_TO_TICKS(500));
     }
 }
+
+
+static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) //wifi事件處理函式(即時顯示wifi連線狀況)
+{
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+        esp_wifi_connect();
+    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+        ESP_LOGI(TAG, "✅ Wi-Fi 連線成功!");
+        mqtt_app_start(); 
+        // mesh_init();
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        ESP_LOGE(TAG, "⚠️ Wi-Fi 斷線，重新嘗試...");
+        esp_wifi_connect();
+    }
+}
+
+
 void mesh_init()  //mesh部分初始化
 {
     mesh_cfg_t mesh_cfg = MESH_INIT_CONFIG_DEFAULT();
@@ -170,22 +243,12 @@ void mesh_init()  //mesh部分初始化
     ESP_ERROR_CHECK(esp_mesh_set_config(&mesh_cfg));
     ESP_ERROR_CHECK(esp_mesh_set_self_organized(true, true));
     ESP_ERROR_CHECK(esp_mesh_start());
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL));
      ESP_LOGI("MESH", "✅ Mesh started!");
 }
 
-static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) //wifi事件處理函式(即時顯示wifi連線狀況)
-{
-    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-        esp_wifi_connect();
-    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
-        ESP_LOGI(TAG, "✅ Wi-Fi 連線成功!");
-        mqtt_app_start(); 
-        // mesh_init();
-    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        ESP_LOGE(TAG, "⚠️ Wi-Fi 斷線，重新嘗試...");
-        esp_wifi_connect();
-    }
-}
+
 static void wifi_init() //wifi初始化
 {
     ESP_ERROR_CHECK(esp_netif_init());
@@ -277,12 +340,12 @@ void app_main(void)
     wifi_init();
     blu_prov();
     xTaskCreate(root_recv_task, "root_recv_task", 4096, NULL, 5, NULL);
-    while(1)
-    {
-        int i=rand();
-        esp_mqtt_client_publish(client, MQTT_TOPIC, "on", 0, 0, 0);
-        vTaskDelay(pdMS_TO_TICKS(500));
-        ESP_LOGI(TAG, "送了狀態");
-        i++;
-    }
+    // while(1)
+    // {
+    //     int i=rand();
+    //     esp_mqtt_client_publish(client, MQTT_TOPIC, "on", 0, 0, 0);
+    //     vTaskDelay(pdMS_TO_TICKS(500));
+    //     ESP_LOGI(TAG, "送了狀態");
+    //     i++;
+    // }
 }

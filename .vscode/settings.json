@@ -5,7 +5,7 @@
   "idf.openOcdConfigs": [
     "board/esp32-bridge.cfg"
   ],
-  "idf.portWin": "COM5",
+  "idf.portWin": "COM6",
   "idf.toolsPathWin": "C:\\Users\\Egg\\.espressif",
   "idf.customExtraVars": {
     "IDF_TARGET": "esp32"
@@ -15,7 +15,22 @@
     "mqtt_client.h": "c",
     "ledc.h": "c",
     "manager.h": "c",
-    "esp_mac.h": "c"
+    "esp_mac.h": "c",
+    "scheme_ble.h": "c",
+    "charconv": "c",
+    "chrono": "c",
+    "optional": "c",
+    "format": "c",
+    "ratio": "c",
+    "system_error": "c",
+    "array": "c",
+    "functional": "c",
+    "regex": "c",
+    "tuple": "c",
+    "type_traits": "c",
+    "utility": "c",
+    "protocomm_security.h": "c",
+    "cjson.h": "c"
   },
   "idf.flashType": "UART"
 }
