@@ -19,8 +19,8 @@
 
 #define MESH_ID  {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}
 #define MQTT_BROKER    "mqtt://192.168.0.66:1883"  // 也可以改成 "mqtt://192.168.1.100"
-#define MQTT_TOPIC     "emqx/esp32"
-
+#define MQTT_TOPIC_push     "emqx/esp32"
+#define MQTT_TOPIC_read     "emqx/esp"
 #define TAG "WIFI_mesh_root"
 
 bool prov;      //檢測是否有憑證
@@ -82,7 +82,7 @@ void light_control()
     {
         printf("亮");
         analogWrite(14,255);
-        esp_mqtt_client_publish(client, MQTT_TOPIC, "on", 0, 0, 0);
+        esp_mqtt_client_publish(client, MQTT_TOPIC_push, "on", 0, 0, 0);
         ESP_LOGI(TAG, "on");
 
     }
@@ -90,7 +90,7 @@ void light_control()
     {
         printf("暗");
         analogWrite(14,0);
-        esp_mqtt_client_publish(client, MQTT_TOPIC, "off", 0, 0, 0);
+        esp_mqtt_client_publish(client, MQTT_TOPIC_push, "off", 0, 0, 0);
         ESP_LOGI(TAG, "off");
     }    
 
@@ -121,20 +121,45 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 {
     ESP_LOGI(TAG, "MQTT 事件 ID: %" PRId32, event_id);
 
-    switch (event_id) {
+    switch (event_id) 
+    {
         case MQTT_EVENT_CONNECTED:
             ESP_LOGI(TAG, "MQTT 連線成功！");
-            esp_mqtt_client_publish(client, MQTT_TOPIC, "Hello from ESP32!", 0, 0, 0);
+            esp_mqtt_client_publish(client, MQTT_TOPIC_push, "Hello from ESP32!", 0, 0, 0);
+            esp_mqtt_client_subscribe(client, MQTT_TOPIC_read, 0);
             break;
+
         case MQTT_EVENT_DISCONNECTED:
             ESP_LOGW(TAG, "MQTT 斷線！");
             break;
+
+
         case MQTT_EVENT_DATA:
             ESP_LOGI(TAG, "收到 MQTT 訊息！");
+            esp_mqtt_event_handle_t event = event_data;
+            char topic[event->topic_len + 1];
+            memcpy(topic, event->topic, event->topic_len);
+            topic[event->topic_len] = 0;
+
+            char data[event->data_len + 1];
+            memcpy(data, event->data, event->data_len);
+            data[event->data_len] = 0;
+
+            ESP_LOGI(TAG, "📥 收到訊息 Topic: %s, Data: %s", topic, data);
+            if (strcmp(data, "on") == 0) 
+            {
+            light = 1;
+            light_control();
+            } 
+            else if (strcmp(data, "off") == 0) 
+            {
+                light = 0;
+                light_control();
+            }
             break;
-        default:
-            ESP_LOGI(TAG, "其他 MQTT 事件: %" PRId32, event_id);
-            break;
+        // default:
+        //     ESP_LOGI(TAG, "其他 MQTT 事件: %" PRId32, event_id);
+        //     break;
     }
 }
 
